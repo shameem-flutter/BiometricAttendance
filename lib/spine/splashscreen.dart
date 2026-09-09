@@ -180,7 +180,7 @@ class _SplashScreenState extends State<SplashScreen>
                   child: Transform.scale(
                     scale: _logoScale.value,
                     child: Container(
-                      padding: const EdgeInsets.all(12),
+                      padding: const EdgeInsets.all(5),
                       decoration: BoxDecoration(
                         color: Colors.white,
                         shape: BoxShape.circle,
@@ -195,8 +195,8 @@ class _SplashScreenState extends State<SplashScreen>
                       child: ClipOval(
                         child: Image.asset(
                           "assets/wasla_logo.png",
-                          height: 76,
-                          width: 76,
+                          height: 82,
+                          width: 82,
                           fit: BoxFit.cover,
                         ),
                       ),
