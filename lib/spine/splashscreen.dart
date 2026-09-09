@@ -180,25 +180,25 @@ class _SplashScreenState extends State<SplashScreen>
                   child: Transform.scale(
                     scale: _logoScale.value,
                     child: Container(
-                      width: 115,
-                      height: 115,
-                      alignment: Alignment.center,
+                      padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
-                        color: Colors.white.withValues(alpha: 0.95),
+                        color: Colors.white,
                         shape: BoxShape.circle,
                         boxShadow: [
                           BoxShadow(
-                            color: Colors.black.withValues(alpha: 0.1),
-                            blurRadius: 15,
+                            color: Colors.black.withValues(alpha: 0.15),
+                            blurRadius: 18,
                             offset: const Offset(0, 8),
                           ),
                         ],
                       ),
-                      child: Image.asset(
-                        "assets/wasla_logo.png",
-                        height: 58,
-                        width: 58,
-                        fit: BoxFit.contain,
+                      child: ClipOval(
+                        child: Image.asset(
+                          "assets/wasla_logo.png",
+                          height: 76,
+                          width: 76,
+                          fit: BoxFit.cover,
+                        ),
                       ),
                     ),
                   ),
