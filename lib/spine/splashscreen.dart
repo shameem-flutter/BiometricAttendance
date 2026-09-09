@@ -180,7 +180,7 @@ class _SplashScreenState extends State<SplashScreen>
                   child: Transform.scale(
                     scale: _logoScale.value,
                     child: Container(
-                      padding: const EdgeInsets.all(5),
+                      padding: const EdgeInsets.all(2.5),
                       decoration: BoxDecoration(
                         color: Colors.white,
                         shape: BoxShape.circle,
