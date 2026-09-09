@@ -432,7 +432,9 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
             children: [
               Icon(Icons.face_retouching_natural, color: primaryColor),
               const SizedBox(width: 8),
-              const Text("Face Enrollment Required"),
+              const Expanded(
+                child: Text("Face Enrollment Required"),
+              ),
             ],
           ),
           content: const Text(
