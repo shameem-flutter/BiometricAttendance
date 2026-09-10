@@ -143,16 +143,25 @@ class SessionInterceptor extends QueuedInterceptorsWrapper {
             final bool? isRouteInstalled = resResult is Map && resResult['is_route_management_installed'] != null
                 ? resResult['is_route_management_installed'] == true
                 : null;
-            // Save new session
+            final String? accessToken = resResult is Map ? resResult['access_token']?.toString() : null;
+            final bool? requireFace = resResult is Map ? resResult['require_face_recognition'] as bool? : null;
+            final bool? faceReg = resResult is Map ? resResult['face_registered'] as bool? : null;
+            final String? faceEmb = resResult is Map ? resResult['face_embedding_data']?.toString() : null;
+
+            // Save new session and token
             await AccountManager.instance.addOrUpdateAccount(
               serverUrl: account.serverUrl,
               database: account.database,
               username: account.username,
               sessionId: sessionId,
+              accessToken: accessToken,
               password: password,
               employeeId: account.employeeId,
               employeeName: account.employeeName,
               isRouteManagementInstalled: isRouteInstalled ?? account.isRouteManagementInstalled,
+              requireFaceRecognition: requireFace ?? account.requireFaceRecognition,
+              faceRegistered: faceReg ?? account.faceRegistered,
+              faceEmbeddingData: faceEmb ?? account.faceEmbeddingData,
             );
 
             // Update ApiClient cookie jar globally (no-op on web; browser manages cookies).
@@ -260,15 +269,24 @@ class SessionInterceptor extends QueuedInterceptorsWrapper {
             final bool? isRouteInstalled = resResult is Map && resResult['is_route_management_installed'] != null
                 ? resResult['is_route_management_installed'] == true
                 : null;
+            final String? accessToken = resResult is Map ? resResult['access_token']?.toString() : null;
+            final bool? requireFace = resResult is Map ? resResult['require_face_recognition'] as bool? : null;
+            final bool? faceReg = resResult is Map ? resResult['face_registered'] as bool? : null;
+            final String? faceEmb = resResult is Map ? resResult['face_embedding_data']?.toString() : null;
+
             await AccountManager.instance.addOrUpdateAccount(
               serverUrl: account.serverUrl,
               database: account.database,
               username: account.username,
               sessionId: sessionId,
+              accessToken: accessToken,
               password: password,
               employeeId: account.employeeId,
               employeeName: account.employeeName,
               isRouteManagementInstalled: isRouteInstalled ?? account.isRouteManagementInstalled,
+              requireFaceRecognition: requireFace ?? account.requireFaceRecognition,
+              faceRegistered: faceReg ?? account.faceRegistered,
+              faceEmbeddingData: faceEmb ?? account.faceEmbeddingData,
             );
 
             if (!kIsWeb) {

@@ -29,6 +29,12 @@ class GpsApiService {
     return await _secureStorage.read(key: 'session_${activeAccount.id}');
   }
 
+  Future<String?> _getAccessToken() async {
+    final activeAccount = AccountManager.instance.activeAccount;
+    if (activeAccount == null) return null;
+    return await AccountManager.instance.getAccessToken(activeAccount.id);
+  }
+
   /// Fetches GPS tracking configuration from backend.
   /// Throws GpsAuthException if session is invalid or expired.
   Future<GpsConfig> fetchGpsConfig() async {
@@ -38,19 +44,27 @@ class GpsApiService {
     }
 
     final sessionId = await _getSessionId();
-    if (sessionId == null || sessionId.isEmpty) {
-      throw GpsAuthException("No session ID found for active account.");
+    final token = await _getAccessToken();
+    if ((sessionId == null || sessionId.isEmpty) && (token == null || token.isEmpty)) {
+      throw GpsAuthException("No session or token found for active account.");
     }
 
     final String url = "${activeAccount.serverUrl}/api/mobile/gps/config";
+    final headers = <String, String>{
+      "Content-Type": "application/json",
+    };
+    if (token != null && token.isNotEmpty) {
+      headers["Authorization"] = "Bearer $token";
+    }
+    if (sessionId != null && sessionId.isNotEmpty) {
+      headers["Cookie"] = "session_id=$sessionId";
+    }
 
     try {
       final response = await _dio.get(
         url,
         options: Options(
-          headers: {
-            "Cookie": "session_id=$sessionId",
-          },
+          headers: headers,
           sendTimeout: const Duration(seconds: 5),
           receiveTimeout: const Duration(seconds: 5),
         ),
@@ -102,14 +116,26 @@ class GpsApiService {
     }
 
     final sessionId = await _getSessionId();
-    if (sessionId == null || sessionId.isEmpty) {
-      throw GpsAuthException("No session ID found for active account.");
+    final token = await _getAccessToken();
+    if ((sessionId == null || sessionId.isEmpty) && (token == null || token.isEmpty)) {
+      throw GpsAuthException("No session or token found for active account.");
     }
 
-    final String url = "${activeAccount.serverUrl}/api/mobile/gps/update/";
+    final String url = "${activeAccount.serverUrl}/api/mobile/gps/update";
+    final headers = <String, String>{
+      "Content-Type": "application/json",
+    };
+    if (token != null && token.isNotEmpty) {
+      headers["Authorization"] = "Bearer $token";
+    }
+    if (sessionId != null && sessionId.isNotEmpty) {
+      headers["Cookie"] = "session_id=$sessionId";
+    }
+
     final data = {
       "jsonrpc": "2.0",
       "params": {
+        "access_token": token ?? "",
         "latitude": latitude,
         "longitude": longitude,
         "employee_id": employeeId,
@@ -121,10 +147,7 @@ class GpsApiService {
         url,
         data: data,
         options: Options(
-          headers: {
-            "Content-Type": "application/json",
-            "Cookie": "session_id=$sessionId",
-          },
+          headers: headers,
           sendTimeout: const Duration(seconds: 5),
           receiveTimeout: const Duration(seconds: 5),
         ),

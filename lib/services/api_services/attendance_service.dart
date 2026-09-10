@@ -1,6 +1,7 @@
 import 'dart:developer';
 import 'package:dio/dio.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
+import 'package:odoo_mobile/models/face_index_model.dart';
 import 'package:odoo_mobile/services/account_manager.dart';
 import 'package:odoo_mobile/services/api_services/apiclient.dart';
 
@@ -8,30 +9,124 @@ class AttendanceService {
   final Dio _dio = ApiClient.dio;
   final FlutterSecureStorage _secureStorage = const FlutterSecureStorage();
 
-  Future<String?> _getSessionId() async {
+  Future<String?> _getAccessToken() async {
     final activeAccount = AccountManager.instance.activeAccount;
     if (activeAccount == null) return null;
-    return await _secureStorage.read(key: 'session_${activeAccount.id}');
+    return await AccountManager.instance.getAccessToken(activeAccount.id);
   }
 
-  Future<Map<String, dynamic>?> fetchCustomers() async {
-    final sessionId = await _getSessionId();
-    if (sessionId == null) return null;
+  Future<Map<String, String>> _getAuthHeaders() async {
+    final headers = <String, String>{
+      "Content-Type": "application/json",
+    };
+    final activeAccount = AccountManager.instance.activeAccount;
+    if (activeAccount != null) {
+      final token = await AccountManager.instance.getAccessToken(activeAccount.id);
+      if (token != null && token.isNotEmpty) {
+        headers["Authorization"] = "Bearer $token";
+      }
+      final sessionId = await _secureStorage.read(key: 'session_${activeAccount.id}');
+      if (sessionId != null && sessionId.isNotEmpty) {
+        headers["Cookie"] = "session_id=$sessionId";
+      }
+    }
+    return headers;
+  }
 
+  /// Synchronizes the registered face index from Odoo (GET /api/mobile/face/get_index)
+  Future<FaceIndexResponse?> getFaceIndex() async {
     final activeAccount = AccountManager.instance.activeAccount;
     if (activeAccount == null) return null;
 
-    final String url = "${activeAccount.serverUrl}/api/customers/coordinates";
+    final String url = "${activeAccount.serverUrl}/api/mobile/face/get_index";
+    final headers = await _getAuthHeaders();
 
     try {
       final response = await _dio.get(
         url,
         options: Options(
-          headers: {
-            "Content-Type": "application/json",
-            "Cookie": "session_id=$sessionId"
-          },
+          headers: headers,
+          sendTimeout: const Duration(seconds: 10),
+          receiveTimeout: const Duration(seconds: 10),
         ),
+      );
+
+      if (response.statusCode == 200 && response.data != null) {
+        if (response.data is Map<String, dynamic>) {
+          final data = response.data as Map<String, dynamic>;
+          final parsed = FaceIndexResponse.fromJson(data);
+          log("👤 [AttendanceService] Face index fetched: status=${parsed.status}, face_registered=${parsed.faceRegistered}");
+          return parsed;
+        }
+      }
+      log("⚠️ [AttendanceService] getFaceIndex returned HTTP ${response.statusCode}");
+      return null;
+    } catch (e) {
+      log("❌ [AttendanceService] Exception in getFaceIndex: $e");
+      return null;
+    }
+  }
+
+  /// Registers a new face index on Odoo backend (POST /api/mobile/face/register)
+  Future<FaceIndexResponse?> registerFace({
+    required String faceEmbeddingData,
+    required String faceImage,
+  }) async {
+    final activeAccount = AccountManager.instance.activeAccount;
+    if (activeAccount == null) return null;
+
+    final token = await _getAccessToken();
+    final String url = "${activeAccount.serverUrl}/api/mobile/face/register";
+    final headers = await _getAuthHeaders();
+
+    final data = {
+      "jsonrpc": "2.0",
+      "params": {
+        "access_token": token ?? "",
+        "face_embedding_data": faceEmbeddingData,
+        "face_image": faceImage,
+      }
+    };
+
+    try {
+      log("👤 [AttendanceService] Registering face index on backend...");
+      final response = await _dio.post(
+        url,
+        data: data,
+        options: Options(
+          headers: headers,
+          sendTimeout: const Duration(seconds: 15),
+          receiveTimeout: const Duration(seconds: 20),
+        ),
+      );
+
+      if (response.statusCode == 200 && response.data != null) {
+        if (response.data is Map<String, dynamic>) {
+          final dataMap = response.data as Map<String, dynamic>;
+          final parsed = FaceIndexResponse.fromJson(dataMap);
+          log("✅ [AttendanceService] Face registration response: ${parsed.status}, message: ${parsed.message}");
+          return parsed;
+        }
+      }
+      log("❌ [AttendanceService] registerFace failed: HTTP ${response.statusCode}");
+      return null;
+    } catch (e) {
+      log("❌ [AttendanceService] Exception in registerFace: $e");
+      return null;
+    }
+  }
+
+  Future<Map<String, dynamic>?> fetchCustomers() async {
+    final activeAccount = AccountManager.instance.activeAccount;
+    if (activeAccount == null) return null;
+
+    final String url = "${activeAccount.serverUrl}/api/customers/coordinates";
+    final headers = await _getAuthHeaders();
+
+    try {
+      final response = await _dio.get(
+        url,
+        options: Options(headers: headers),
       );
 
       if (response.statusCode == 200) {
@@ -48,33 +143,40 @@ class AttendanceService {
     required double latitude,
     required double longitude,
     required String action, // "check_in" or "check_out"
+    bool? faceVerified,
+    double? similarityScore,
   }) async {
-    final sessionId = await _getSessionId();
-    if (sessionId == null) return null;
-
     final activeAccount = AccountManager.instance.activeAccount;
     if (activeAccount == null) return null;
 
-    final String url = "${activeAccount.serverUrl}/api/mobile/attendance/mark/";
+    final token = await _getAccessToken();
+    final String url = "${activeAccount.serverUrl}/api/mobile/attendance/mark";
+    final headers = await _getAuthHeaders();
+
+    final params = <String, dynamic>{
+      "access_token": token ?? "",
+      "latitude": latitude,
+      "longitude": longitude,
+      "action": action,
+    };
+
+    if (faceVerified != null) {
+      params["face_verified"] = faceVerified;
+    }
+    if (similarityScore != null) {
+      params["similarity_score"] = double.parse(similarityScore.toStringAsFixed(4));
+    }
+
     final data = {
       "jsonrpc": "2.0",
-      "params": {
-        "latitude": latitude,
-        "longitude": longitude,
-        "action": action
-      }
+      "params": params,
     };
 
     try {
       final response = await _dio.post(
         url,
         data: data,
-        options: Options(
-          headers: {
-            "Content-Type": "application/json",
-            "Cookie": "session_id=$sessionId"
-          },
-        ),
+        options: Options(headers: headers),
       );
 
       if (response.statusCode == 200) {
@@ -106,19 +208,20 @@ class AttendanceService {
     required double driverLat,
     required double driverLng,
   }) async {
-    final sessionId = await _getSessionId();
-    if (sessionId == null) return null;
-
     final activeAccount = AccountManager.instance.activeAccount;
     if (activeAccount == null) return null;
 
+    final token = await _getAccessToken();
     final String url = "${activeAccount.serverUrl}/api/route/mark_reached";
+    final headers = await _getAuthHeaders();
+
     final data = {
       "jsonrpc": "2.0",
       "params": {
+        "access_token": token ?? "",
         "stop_id": stopId,
         "driver_lat": driverLat,
-        "driver_lng": driverLng
+        "driver_lng": driverLng,
       }
     };
 
@@ -126,12 +229,7 @@ class AttendanceService {
       final response = await _dio.post(
         url,
         data: data,
-        options: Options(
-          headers: {
-            "Content-Type": "application/json",
-            "Cookie": "session_id=$sessionId"
-          },
-        ),
+        options: Options(headers: headers),
       );
 
       if (response.statusCode == 200) {
@@ -145,23 +243,16 @@ class AttendanceService {
   }
 
   Future<Map<String, dynamic>?> fetchAttendanceHistory() async {
-    final sessionId = await _getSessionId();
-    if (sessionId == null) return null;
-
     final activeAccount = AccountManager.instance.activeAccount;
     if (activeAccount == null) return null;
 
     final String url = "${activeAccount.serverUrl}/api/mobile/attendance/history";
+    final headers = await _getAuthHeaders();
 
     try {
       final response = await _dio.get(
         url,
-        options: Options(
-          headers: {
-            "Content-Type": "application/json",
-            "Cookie": "session_id=$sessionId"
-          },
-        ),
+        options: Options(headers: headers),
       );
 
       if (response.statusCode == 200 && response.data != null) {

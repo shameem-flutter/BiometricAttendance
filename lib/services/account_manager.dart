@@ -93,10 +93,14 @@ class AccountManager extends ChangeNotifier {
     required String database,
     required String username,
     required String sessionId,
+    String? accessToken,
     String? password,
     int? employeeId,
     String? employeeName,
     bool? isRouteManagementInstalled,
+    bool? requireFaceRecognition,
+    bool? faceRegistered,
+    String? faceEmbeddingData,
   }) async {
     final cleanUrl = ApiEndpoints.normalizeUrl(serverUrl);
     final id = Account.generateId(serverUrl: cleanUrl, database: database, username: username);
@@ -110,6 +114,9 @@ class AccountManager extends ChangeNotifier {
         employeeId: employeeId ?? _accounts[existingIndex].employeeId,
         employeeName: employeeName ?? _accounts[existingIndex].employeeName,
         isRouteManagementInstalled: isRouteManagementInstalled ?? _accounts[existingIndex].isRouteManagementInstalled,
+        requireFaceRecognition: requireFaceRecognition ?? _accounts[existingIndex].requireFaceRecognition,
+        faceRegistered: faceRegistered ?? _accounts[existingIndex].faceRegistered,
+        faceEmbeddingData: faceEmbeddingData ?? _accounts[existingIndex].faceEmbeddingData,
       );
     } else {
       log("AccountManager: Adding new account: $username");
@@ -122,11 +129,19 @@ class AccountManager extends ChangeNotifier {
         employeeId: employeeId,
         employeeName: employeeName,
         isRouteManagementInstalled: isRouteManagementInstalled ?? false,
+        requireFaceRecognition: requireFaceRecognition,
+        faceRegistered: faceRegistered,
+        faceEmbeddingData: faceEmbeddingData,
       );
       _accounts.add(newAccount);
     }
 
     await _secureStorage.write(key: 'session_$id', value: sessionId);
+    if (accessToken != null && accessToken.isNotEmpty) {
+      await _secureStorage.write(key: 'access_token_$id', value: accessToken);
+    } else {
+      await _secureStorage.write(key: 'access_token_$id', value: sessionId);
+    }
     if (password != null) {
       await _secureStorage.write(key: 'password_$id', value: password);
     }
@@ -136,6 +151,32 @@ class AccountManager extends ChangeNotifier {
   /// Retrieves the password for a given account ID
   Future<String?> getPassword(String accountId) async {
     return await _secureStorage.read(key: 'password_$accountId');
+  }
+
+  /// Retrieves the access token for a given account ID (falls back to session ID)
+  Future<String?> getAccessToken(String accountId) async {
+    final token = await _secureStorage.read(key: 'access_token_$accountId');
+    if (token != null && token.isNotEmpty) return token;
+    return await _secureStorage.read(key: 'session_$accountId');
+  }
+
+  /// Updates the face recognition status and optional embedding data for an account
+  Future<void> updateFaceRegistrationStatus(
+    String accountId, {
+    required bool faceRegistered,
+    bool? requireFaceRecognition,
+    String? faceEmbeddingData,
+  }) async {
+    final existingIndex = _accounts.indexWhere((a) => a.id == accountId);
+    if (existingIndex != -1) {
+      _accounts[existingIndex] = _accounts[existingIndex].copyWith(
+        faceRegistered: faceRegistered,
+        requireFaceRecognition: requireFaceRecognition ?? _accounts[existingIndex].requireFaceRecognition,
+        faceEmbeddingData: faceEmbeddingData ?? _accounts[existingIndex].faceEmbeddingData,
+      );
+      await _saveAccountsToPrefs();
+      notifyListeners();
+    }
   }
 
   /// Account Switching & Synchronization Flow
@@ -303,10 +344,10 @@ class AccountManager extends ChangeNotifier {
       }
     }
 
-    // Delete secure storage session, password, and face biometric template
+    // Delete secure storage session, password, and access token (preserve biometric face template)
     await _secureStorage.delete(key: 'session_${account.id}');
     await _secureStorage.delete(key: 'password_${account.id}');
-    await _secureStorage.delete(key: 'face_embedding_${account.id}');
+    await _secureStorage.delete(key: 'access_token_${account.id}');
 
     // Remove from account list
     _accounts.removeWhere((a) => a.id == accountId);

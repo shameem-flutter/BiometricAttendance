@@ -11,6 +11,9 @@ class Account {
   final String? employeeName;
 
   final bool isRouteManagementInstalled;
+  final bool? requireFaceRecognition;
+  final bool? faceRegistered;
+  final String? faceEmbeddingData;
 
   Account({
     required this.id,
@@ -21,6 +24,9 @@ class Account {
     this.employeeId,
     this.employeeName,
     this.isRouteManagementInstalled = false,
+    this.requireFaceRecognition,
+    this.faceRegistered,
+    this.faceEmbeddingData,
   });
 
   /// Generates a unique, deterministic ID using SHA-256
@@ -44,6 +50,9 @@ class Account {
     int? employeeId,
     String? employeeName,
     bool isRouteManagementInstalled = false,
+    bool? requireFaceRecognition,
+    bool? faceRegistered,
+    String? faceEmbeddingData,
   }) {
     return Account(
       id: generateId(
@@ -58,6 +67,9 @@ class Account {
       employeeId: employeeId,
       employeeName: employeeName,
       isRouteManagementInstalled: isRouteManagementInstalled,
+      requireFaceRecognition: requireFaceRecognition,
+      faceRegistered: faceRegistered,
+      faceEmbeddingData: faceEmbeddingData,
     );
   }
 
@@ -83,6 +95,9 @@ class Account {
       'employeeId': employeeId,
       'employeeName': employeeName,
       'isRouteManagementInstalled': isRouteManagementInstalled,
+      'requireFaceRecognition': requireFaceRecognition,
+      'faceRegistered': faceRegistered,
+      'faceEmbeddingData': faceEmbeddingData,
     };
   }
 
@@ -96,6 +111,9 @@ class Account {
       employeeId: json['employeeId'] as int?,
       employeeName: json['employeeName'] as String?,
       isRouteManagementInstalled: json['isRouteManagementInstalled'] as bool? ?? json['is_route_management_installed'] as bool? ?? false,
+      requireFaceRecognition: json['requireFaceRecognition'] as bool? ?? json['require_face_recognition'] as bool?,
+      faceRegistered: json['faceRegistered'] as bool? ?? json['face_registered'] as bool?,
+      faceEmbeddingData: json['faceEmbeddingData']?.toString() ?? json['face_embedding_data']?.toString(),
     );
   }
 
@@ -108,6 +126,9 @@ class Account {
     int? employeeId,
     String? employeeName,
     bool? isRouteManagementInstalled,
+    bool? requireFaceRecognition,
+    bool? faceRegistered,
+    String? faceEmbeddingData,
   }) {
     return Account(
       id: id ?? this.id,
@@ -118,6 +139,9 @@ class Account {
       employeeId: employeeId ?? this.employeeId,
       employeeName: employeeName ?? this.employeeName,
       isRouteManagementInstalled: isRouteManagementInstalled ?? this.isRouteManagementInstalled,
+      requireFaceRecognition: requireFaceRecognition ?? this.requireFaceRecognition,
+      faceRegistered: faceRegistered ?? this.faceRegistered,
+      faceEmbeddingData: faceEmbeddingData ?? this.faceEmbeddingData,
     );
   }
 }

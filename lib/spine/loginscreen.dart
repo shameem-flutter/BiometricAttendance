@@ -8,6 +8,7 @@ import 'package:odoo_mobile/constants/gap_func.dart';
 import 'package:odoo_mobile/models/account_model.dart';
 import 'package:odoo_mobile/services/account_manager.dart';
 import 'package:odoo_mobile/services/api_services/authservice.dart';
+import 'package:odoo_mobile/services/face_verification_service.dart';
 import 'package:odoo_mobile/services/gps_tracking_service.dart';
 import 'package:odoo_mobile/widgets/textformfield.dart';
 
@@ -49,36 +50,48 @@ class _LoginScreenState extends State<LoginScreen> {
       final password = passwordController.text.trim();
 
       try {
-        final (isLoggedIn, sessionId, employeeId, employeeName, isRouteManagementInstalled) = await authService.login(
+        final loginResult = await authService.login(
             baseUrl: baseUrl, db: db, username: username, password: password);
             
         if (!mounted) return;
         
-        if (isLoggedIn && sessionId != null) {
-          // Add or update the account with employee session details
+        if (loginResult.isSuccess && loginResult.sessionId != null) {
+          final accountId = Account.generateId(
+            serverUrl: baseUrl, 
+            database: db, 
+            username: username,
+          );
+
+          // Add or update the account with employee session details and face recognition fields
           await AccountManager.instance.addOrUpdateAccount(
             serverUrl: baseUrl, 
             database: db, 
             username: username, 
-            sessionId: sessionId,
+            sessionId: loginResult.sessionId!,
+            accessToken: loginResult.accessToken,
             password: password,
-            employeeId: employeeId,
-            employeeName: employeeName,
-            isRouteManagementInstalled: isRouteManagementInstalled,
+            employeeId: loginResult.employeeId,
+            employeeName: loginResult.employeeName,
+            isRouteManagementInstalled: loginResult.isRouteManagementInstalled,
+            requireFaceRecognition: loginResult.requireFaceRecognition,
+            faceRegistered: loginResult.faceRegistered,
+            faceEmbeddingData: loginResult.faceEmbeddingData,
           );
 
-          if (employeeId != null) {
-            GpsTrackingService.instance.setEmployeeSessionInfo(
-              employeeId: employeeId,
-              employeeName: employeeName ?? username,
-            );
+          // If face embedding data is present from login response, cache/save it immediately
+          if (loginResult.faceEmbeddingData != null && loginResult.faceEmbeddingData!.isNotEmpty) {
+            final embedding = FaceVerificationService.instance.parseEmbeddingString(loginResult.faceEmbeddingData);
+            if (embedding != null && embedding.isNotEmpty) {
+              await FaceVerificationService.instance.saveEnrolledEmbedding(accountId, embedding);
+            }
           }
 
-          final accountId = Account.generateId(
-            serverUrl: baseUrl, 
-            database: db, 
-            username: username
-          );
+          if (loginResult.employeeId != null) {
+            GpsTrackingService.instance.setEmployeeSessionInfo(
+              employeeId: loginResult.employeeId!,
+              employeeName: loginResult.employeeName ?? username,
+            );
+          }
 
           if (!mounted) return;
           final success = await AccountManager.instance.switchAccount(

@@ -2,6 +2,7 @@ import 'dart:developer';
 import 'package:cookie_jar/cookie_jar.dart';
 import 'package:dio/dio.dart';
 import 'package:odoo_mobile/constants/api_endpoint.dart';
+import 'package:odoo_mobile/models/login_result.dart';
 import 'package:odoo_mobile/services/api_services/apiclient.dart';
 
 class Authservice {
@@ -9,8 +10,8 @@ class Authservice {
 
   Authservice();
 
-  /// Authenticates with Odoo and returns (success, sessionId, employeeId, employeeName, isRouteManagementInstalled) if successful
-  Future<(bool, String?, int?, String?, bool)> login({
+  /// Authenticates with Odoo and returns a typed LoginResult with session, employee, and face lock configuration
+  Future<LoginResult> login({
     required String baseUrl,
     required String db,
     required String username,
@@ -38,8 +39,9 @@ class Authservice {
         final mapData = response.data as Map<String, dynamic>;
 
         if (mapData["error"] != null) {
-          log("Server returned an error: ${mapData['error']['message']}");
-          return (false, null, null, null, false);
+          final errorMsg = mapData['error']['message'] ?? "Server returned error";
+          log("Server returned an error: $errorMsg");
+          return LoginResult.failed(message: errorMsg.toString());
         }
 
         if (mapData["result"] != null) {
@@ -50,15 +52,47 @@ class Authservice {
             // In Odoo, failed auth returns uid == false or null
             if (uid == null || uid == false) {
               log("Odoo authentication failed: uid is false or null.");
-              return (false, null, null, null, false);
+              return LoginResult.failed(message: "Invalid credentials");
             }
 
-            log("Login successful. Extracting session ID and employee info.");
+            log("Login successful. Extracting session ID, employee info, and face recognition configuration.");
 
             var sessionId = result['session_id']?.toString();
+            var accessToken = result['access_token']?.toString();
             int? employeeId;
             String? employeeName;
             bool isRouteManagementInstalled = false;
+
+            // Extract Face Recognition fields (Odoo 19)
+            bool? requireFaceRecognition;
+            if (result['require_face_recognition'] != null) {
+              if (result['require_face_recognition'] is bool) {
+                requireFaceRecognition = result['require_face_recognition'] as bool;
+              } else if (result['require_face_recognition'].toString().toLowerCase() == 'true') {
+                requireFaceRecognition = true;
+              } else if (result['require_face_recognition'].toString().toLowerCase() == 'false') {
+                requireFaceRecognition = false;
+              }
+            }
+
+            bool? faceRegistered;
+            if (result['face_registered'] != null) {
+              if (result['face_registered'] is bool) {
+                faceRegistered = result['face_registered'] as bool;
+              } else if (result['face_registered'].toString().toLowerCase() == 'true') {
+                faceRegistered = true;
+              } else if (result['face_registered'].toString().toLowerCase() == 'false') {
+                faceRegistered = false;
+              }
+            }
+
+            String? faceEmbeddingData;
+            if (result['face_embedding_data'] != null) {
+              final raw = result['face_embedding_data'].toString().trim();
+              if (raw.isNotEmpty && raw != 'false' && raw != 'null') {
+                faceEmbeddingData = raw;
+              }
+            }
 
             if (result['is_route_management_installed'] != null) {
               if (result['is_route_management_installed'] is bool) {
@@ -122,19 +156,29 @@ class Authservice {
                 Uri.parse(cleanUrl),
                 [Cookie("session_id", sessionId)],
               );
-              return (true, sessionId, employeeId, employeeName, isRouteManagementInstalled);
+              return LoginResult(
+                isSuccess: true,
+                sessionId: sessionId,
+                accessToken: accessToken ?? sessionId,
+                employeeId: employeeId,
+                employeeName: employeeName,
+                isRouteManagementInstalled: isRouteManagementInstalled,
+                requireFaceRecognition: requireFaceRecognition,
+                faceRegistered: faceRegistered,
+                faceEmbeddingData: faceEmbeddingData,
+              );
             } else {
               log("⚠️ No session_id found in JSON, headers, or cookies.");
-              return (false, null, null, null, false);
+              return LoginResult.failed(message: "No session ID returned");
             }
           }
         }
       }
 
-      return (false, null, null, null, false);
+      return LoginResult.failed(message: "Authentication failed");
     } catch (e) {
       log("Login failed with an exception: $e");
-      return (false, null, null, null, false);
+      return LoginResult.failed(message: e.toString());
     }
   }
 

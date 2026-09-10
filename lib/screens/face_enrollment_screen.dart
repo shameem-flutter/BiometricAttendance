@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:convert';
 import 'dart:developer';
 import 'dart:io';
 import 'package:camera/camera.dart';
@@ -8,6 +9,8 @@ import 'package:google_mlkit_face_detection/google_mlkit_face_detection.dart';
 import 'package:image/image.dart' as img;
 import 'package:odoo_mobile/constants/color_constants.dart';
 import 'package:odoo_mobile/models/face_verification_result.dart';
+import 'package:odoo_mobile/services/account_manager.dart';
+import 'package:odoo_mobile/services/api_services/attendance_service.dart';
 import 'package:odoo_mobile/services/face_verification_service.dart';
 import 'package:odoo_mobile/utils/camera_image_converter.dart';
 import 'package:odoo_mobile/utils/camera_mlkit_converter.dart';
@@ -530,11 +533,17 @@ class _FaceEnrollmentScreenState extends State<FaceEnrollmentScreen> {
       _perfTimer.startStep();
       final compositeTemplate = FaceVerificationService.computeCompositeTemplate(sampledEmbeddings);
 
-      // Save securely for current account
-      await FaceVerificationService.instance.saveEnrolledEmbedding(
-        widget.accountId,
-        compositeTemplate,
-      );
+      // Register with backend & save locally
+      final registered = await _uploadAndPersistEnrollment(compositeTemplate, convertedImages.first);
+      if (!registered) {
+        _finishWithResult(
+          FaceVerificationResult.failed(
+            status: FaceVerificationStatus.error,
+            message: 'Face registration could not be completed on the server.',
+          ),
+        );
+        return;
+      }
       _perfTimer.similarityMs = _perfTimer.stopStep();
 
       // OPT-7: Log debug performance timings
@@ -545,7 +554,7 @@ class _FaceEnrollmentScreenState extends State<FaceEnrollmentScreen> {
       setState(() {
         _step = _EnrollmentStep.success;
         _title = 'Enrollment Complete!';
-        _subtitle = 'Your face template has been securely saved.';
+        _subtitle = 'Your face template has been securely saved and registered.';
         _icon = Icons.check_circle_outline;
         _borderColor = const Color(0xFF00E676);
         _progress = 1.0;
@@ -554,7 +563,7 @@ class _FaceEnrollmentScreenState extends State<FaceEnrollmentScreen> {
       await Future.delayed(const Duration(milliseconds: 1000));
       _finishWithResult(
         FaceVerificationResult.success(
-          message: 'Face enrolled successfully.',
+          message: 'Face Recognition Index registered successfully.',
         ),
       );
     } catch (e, stack) {
@@ -583,6 +592,7 @@ class _FaceEnrollmentScreenState extends State<FaceEnrollmentScreen> {
 
       final List<List<double>> sampledEmbeddings = [];
 
+      img.Image? firstDecodedImage;
       for (int i = 0; i < 3; i++) {
         if (!mounted || _isDisposed) return;
 
@@ -604,6 +614,7 @@ class _FaceEnrollmentScreenState extends State<FaceEnrollmentScreen> {
         if (faces.length == 1) {
           final decoded = img.decodeImage(photoBytes);
           if (decoded != null) {
+            firstDecodedImage ??= decoded;
             final emb = FaceVerificationService.instance.extractEmbedding(
               decoded,
               faces.first.boundingBox,
@@ -615,7 +626,7 @@ class _FaceEnrollmentScreenState extends State<FaceEnrollmentScreen> {
         await Future.delayed(const Duration(milliseconds: 300));
       }
 
-      if (sampledEmbeddings.isEmpty) {
+      if (sampledEmbeddings.isEmpty || firstDecodedImage == null) {
         _finishWithResult(
           FaceVerificationResult.failed(
             status: FaceVerificationStatus.noFace,
@@ -626,17 +637,25 @@ class _FaceEnrollmentScreenState extends State<FaceEnrollmentScreen> {
       }
 
       final compositeTemplate = FaceVerificationService.computeCompositeTemplate(sampledEmbeddings);
-      await FaceVerificationService.instance.saveEnrolledEmbedding(
-        widget.accountId,
-        compositeTemplate,
-      );
+
+      // Register with backend & save locally
+      final registered = await _uploadAndPersistEnrollment(compositeTemplate, firstDecodedImage);
+      if (!registered) {
+        _finishWithResult(
+          FaceVerificationResult.failed(
+            status: FaceVerificationStatus.error,
+            message: 'Face registration could not be completed on the server.',
+          ),
+        );
+        return;
+      }
 
       if (!mounted || _isDisposed) return;
 
       setState(() {
         _step = _EnrollmentStep.success;
         _title = 'Enrollment Complete!';
-        _subtitle = 'Your face template has been securely saved.';
+        _subtitle = 'Your face template has been securely saved and registered.';
         _icon = Icons.check_circle_outline;
         _borderColor = const Color(0xFF00E676);
         _progress = 1.0;
@@ -645,7 +664,7 @@ class _FaceEnrollmentScreenState extends State<FaceEnrollmentScreen> {
       await Future.delayed(const Duration(milliseconds: 1000));
       _finishWithResult(
         FaceVerificationResult.success(
-          message: 'Face enrolled successfully.',
+          message: 'Face Recognition Index registered successfully.',
         ),
       );
     } catch (e, stack) {
@@ -656,6 +675,66 @@ class _FaceEnrollmentScreenState extends State<FaceEnrollmentScreen> {
           message: 'Failed to complete face enrollment: $e',
         ),
       );
+    }
+  }
+
+  /// Sends face embedding data and captured image to Odoo POST /api/mobile/face/register
+  /// and saves the composite template locally upon success.
+  Future<bool> _uploadAndPersistEnrollment(List<double> compositeTemplate, img.Image faceImage) async {
+    setState(() {
+      _title = 'Registering Face...';
+      _subtitle = 'Uploading biometric index to server...';
+      _borderColor = Colors.blue;
+      _progress = 0.95;
+    });
+
+    try {
+      final jpgBytes = img.encodeJpg(faceImage, quality: 85);
+      final base64Image = "data:image/jpeg;base64,${base64Encode(jpgBytes)}";
+      final embeddingJson = jsonEncode(compositeTemplate);
+
+      log("🧠 [Face Biometric Vector] Extracted ${compositeTemplate.length}-dimensional feature embedding:");
+      log("   Sample values: ${compositeTemplate.take(8).map((e) => e.toStringAsFixed(4)).toList()}...");
+      log("   Face image encoded: ${jpgBytes.length} bytes (base64 string length: ${base64Image.length})");
+      log("   Sending payload to Odoo POST /api/mobile/face/register...");
+
+      final response = await AttendanceService().registerFace(
+        faceEmbeddingData: embeddingJson,
+        faceImage: base64Image,
+      );
+
+      if (response != null && response.isSuccess) {
+        // Save securely for current account locally
+        await FaceVerificationService.instance.saveEnrolledEmbedding(
+          widget.accountId,
+          compositeTemplate,
+        );
+
+        // Update account state
+        await AccountManager.instance.updateFaceRegistrationStatus(
+          widget.accountId,
+          faceRegistered: true,
+          faceEmbeddingData: embeddingJson,
+        );
+
+        return true;
+      } else {
+        final errorMsg = response?.message ?? 'Face registration failed on server.';
+        log('❌ [FaceEnrollmentScreen] Server face registration failed: $errorMsg');
+        if (mounted) {
+          setState(() {
+            _step = _EnrollmentStep.failed;
+            _title = 'Registration Failed';
+            _subtitle = errorMsg;
+            _borderColor = Colors.red;
+            _progress = 1.0;
+          });
+        }
+        return false;
+      }
+    } catch (e) {
+      log('❌ [FaceEnrollmentScreen] Error uploading face registration: $e');
+      return false;
     }
   }
 

@@ -58,6 +58,39 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
 
     _loadCustomers();
     _loadAttendanceHistory();
+    _syncFaceStatusFromBackend();
+  }
+
+  /// Synchronizes authoritative face registration status and template from Odoo backend
+  Future<void> _syncFaceStatusFromBackend() async {
+    final activeAccount = AccountManager.instance.activeAccount;
+    if (activeAccount == null) return;
+
+    try {
+      final indexResp = await _attendanceService.getFaceIndex();
+      if (indexResp != null && indexResp.isSuccess) {
+        final requireFace = indexResp.requireFaceRecognition ?? activeAccount.requireFaceRecognition;
+        final faceRegistered = indexResp.faceRegistered ?? activeAccount.faceRegistered ?? false;
+
+        // If face is registered on backend and embedding data returned, cache/persist it locally
+        if (faceRegistered && indexResp.faceEmbeddingData != null) {
+          final embedding = indexResp.parsedEmbedding;
+          if (embedding != null && embedding.isNotEmpty) {
+            await FaceVerificationService.instance.saveEnrolledEmbedding(activeAccount.id, embedding);
+          }
+        }
+
+        await AccountManager.instance.updateFaceRegistrationStatus(
+          activeAccount.id,
+          faceRegistered: faceRegistered,
+          requireFaceRecognition: requireFace,
+          faceEmbeddingData: indexResp.faceEmbeddingData,
+        );
+        log("👤 [AttendanceScreen] Face status synchronized: requireFace=$requireFace, registered=$faceRegistered");
+      }
+    } catch (e) {
+      log('⚠️ [AttendanceScreen] Failed to sync face status from backend: $e');
+    }
   }
 
 
@@ -244,26 +277,33 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
         return;
       }
 
-      // MANDATORY SECURITY GATE: APP-SIDE BIOMETRIC VERIFICATION
-      // - iOS: Native Apple Face ID via LocalAuthentication (LocalAuth).
-      // - Android: Custom Face Lock (Google ML Kit + MobileFaceNet + active liveness).
-      // Attendance flow order:
-      // 1. Biometric verification gate (strict Face ID / Face Lock)
-      // 2. ONLY upon success: obtain GPS
-      // 3. ONLY upon success: call Odoo attendance API
+      // DECISION LOGIC FOR FACE RECOGNITION (Odoo 19 Cases 1, 2, 3)
+      final bool requireFaceRecognition = activeAccount.requireFaceRecognition ?? true;
 
-      final bool authPassed;
-      if (Platform.isIOS) {
-        authPassed = await _verifyIosFaceId(activeAccount, action);
+      bool authPassed = false;
+      double? similarityScore;
+
+      if (!requireFaceRecognition) {
+        // CASE 1: Face recognition not required -> Skip face verification entirely
+        log("ℹ️ [Attendance] Face recognition not required for account ${activeAccount.id}. Proceeding directly to GPS...");
+        authPassed = true;
       } else {
-        authPassed = await _verifyAndroidFaceLock(activeAccount, action);
+        // CASES 2 & 3: Face recognition required
+        if (Platform.isIOS) {
+          authPassed = await _verifyIosFaceId(activeAccount, action);
+          similarityScore = 1.0;
+        } else {
+          final (passed, score) = await _verifyAndroidFaceLock(activeAccount, action);
+          authPassed = passed;
+          similarityScore = score;
+        }
+
+        if (!authPassed) {
+          return; // MANDATORY: Return immediately without requesting GPS or calling attendance API
+        }
       }
 
-      if (!authPassed) {
-        return; // MANDATORY: Return immediately without requesting GPS or calling attendance API
-      }
-
-      log("✅ [Attendance] Biometric verification passed. Proceeding to GPS location...");
+      log("✅ [Attendance] Auth check passed (requireFace: $requireFaceRecognition). Proceeding to GPS location...");
 
       final position = await _getCurrentLocation();
       if (position == null) {
@@ -283,6 +323,8 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
         latitude: position.latitude,
         longitude: position.longitude,
         action: action,
+        faceVerified: requireFaceRecognition ? true : false,
+        similarityScore: requireFaceRecognition ? similarityScore : null,
       );
 
       if (!mounted) return;
@@ -411,17 +453,34 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
   /// Performs custom Face Lock verification on Android via ML Kit + MobileFaceNet + active liveness.
   ///
   /// Invariants:
-  /// - Preserves full custom pipeline: enrollment check -> liveness -> 1:1 embedding comparison.
-  /// - Returns `true` ONLY when cosine similarity meets or exceeds threshold (0.75).
-  /// - Returns `false` on cancel, failure, or missing enrollment, stopping attendance immediately.
-  Future<bool> _verifyAndroidFaceLock(Account activeAccount, String action) async {
+  /// - Returns `(true, similarity)` ONLY when cosine similarity meets or exceeds threshold.
+  /// - Returns `(false, null)` on cancel, failure, or missing enrollment, stopping attendance immediately.
+  Future<(bool, double?)> _verifyAndroidFaceLock(Account activeAccount, String action) async {
     final messenger = ScaffoldMessenger.of(context);
 
-    // 1. Check enrollment
-    final hasEnrolled = await FaceVerificationService.instance.hasEnrolledFace(activeAccount.id);
+    // 1. Check enrollment locally
+    bool hasEnrolled = await FaceVerificationService.instance.hasEnrolledFace(activeAccount.id);
     if (!hasEnrolled) {
-      log("🔒 [Attendance-Android] No enrolled face for account ${activeAccount.id}. Prompting enrollment...");
-      if (!mounted) return false;
+      // Check if backend already has registered face index
+      final indexResp = await _attendanceService.getFaceIndex();
+      if (indexResp != null && indexResp.isSuccess && (indexResp.faceRegistered ?? false)) {
+        final emb = indexResp.parsedEmbedding;
+        if (emb != null && emb.isNotEmpty) {
+          await FaceVerificationService.instance.saveEnrolledEmbedding(activeAccount.id, emb);
+          hasEnrolled = true;
+          await AccountManager.instance.updateFaceRegistrationStatus(
+            activeAccount.id,
+            faceRegistered: true,
+            requireFaceRecognition: indexResp.requireFaceRecognition,
+            faceEmbeddingData: indexResp.faceEmbeddingData,
+          );
+        }
+      }
+    }
+
+    if (!hasEnrolled) {
+      log("🔒 [Attendance-Android] No enrolled face for account ${activeAccount.id}. Prompting registration...");
+      if (!mounted) return (false, null);
 
       final shouldEnroll = await showDialog<bool>(
         context: context,
@@ -433,12 +492,12 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
               Icon(Icons.face_retouching_natural, color: primaryColor),
               const SizedBox(width: 8),
               const Expanded(
-                child: Text("Face Enrollment Required"),
+                child: Text("Face Registration Required"),
               ),
             ],
           ),
           content: const Text(
-            "Face verification is required for attendance. Please complete face enrollment first.",
+            "Face recognition is required for attendance. Please complete face registration first.",
           ),
           actions: [
             TextButton(
@@ -451,7 +510,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
                 shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(8)),
               ),
               onPressed: () => Navigator.of(dialogCtx).pop(true),
-              child: const Text("Enroll Face Now", style: TextStyle(color: Colors.white)),
+              child: const Text("Register Face Now", style: TextStyle(color: Colors.white)),
             ),
           ],
         ),
@@ -471,7 +530,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
         if (enrollmentResult != null && enrollmentResult.isSuccess) {
           messenger.showSnackBar(
             SnackBar(
-              content: const Text("Face enrolled successfully. Please tap Check-In / Check-Out again."),
+              content: const Text("Face registered successfully. Please tap Check-In / Check-Out again."),
               backgroundColor: const Color(0xFF00E676),
               behavior: SnackBarBehavior.floating,
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -480,7 +539,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
         } else {
           messenger.showSnackBar(
             SnackBar(
-              content: Text(enrollmentResult?.message ?? "Face enrollment was not completed."),
+              content: Text(enrollmentResult?.message ?? "Face registration was not completed."),
               backgroundColor: redColor,
               behavior: SnackBarBehavior.floating,
               shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
@@ -488,12 +547,12 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
           );
         }
       }
-      return false; // MANDATORY: Return immediately without requesting GPS or calling attendance API
+      return (false, null); // MANDATORY: Return immediately without requesting GPS or calling attendance API
     }
 
     // 2. Launch Face Verification Gate
     log("🔒 [Attendance-Android] Launching app-side face verification for account ${activeAccount.id}...");
-    if (!mounted) return false;
+    if (!mounted) return (false, null);
 
     final verifyResult = await Navigator.push<FaceVerificationResult>(
       context,
@@ -508,7 +567,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
 
     if (verifyResult == null || !verifyResult.isSuccess) {
       log("🔒 [Attendance-Android] Face verification not passed: ${verifyResult?.status} - ${verifyResult?.message}");
-      if (!mounted) return false;
+      if (!mounted) return (false, null);
       messenger.showSnackBar(
         SnackBar(
           content: Text(verifyResult?.message ?? "Face verification failed. Attendance was not recorded."),
@@ -517,11 +576,11 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
           shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
         ),
       );
-      return false; // MANDATORY: Return immediately without requesting GPS or calling attendance API
+      return (false, null); // MANDATORY: Return immediately without requesting GPS or calling attendance API
     }
 
     log("✅ [Attendance-Android] Face verification passed (similarity: ${verifyResult.similarity}).");
-    return true;
+    return (true, verifyResult.similarity);
   }
 
   /// Displays information explaining that Face ID on iOS is configured in system settings.
@@ -665,6 +724,7 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
                 onPressed: () {
                   _loadCustomers();
                   _loadAttendanceHistory();
+                  _syncFaceStatusFromBackend();
                 },
               ),
               PopupMenuButton<String>(

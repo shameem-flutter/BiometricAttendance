@@ -208,46 +208,81 @@ class FaceVerificationService {
     return l2Normalize(composite);
   }
 
+  final Map<String, List<double>> _cachedEmbeddings = {};
+
   // ===========================================================================
-  // SECURE STORAGE / MULTI-ACCOUNT METHODS
+  // SECURE STORAGE / IN-MEMORY TEMPLATE CACHING METHODS
   // ===========================================================================
+
+  /// Safely parses an embedding JSON string or list into `List<double>`
+  List<double>? parseEmbeddingString(dynamic raw) {
+    if (raw == null) return null;
+    if (raw is List) {
+      return raw.map((e) => (e as num).toDouble()).toList();
+    }
+    if (raw is String) {
+      final trimmed = raw.trim();
+      if (trimmed.isEmpty || trimmed == 'false' || trimmed == 'null') return null;
+      try {
+        final decoded = jsonDecode(trimmed);
+        if (decoded is List) {
+          return decoded.map((e) => (e as num).toDouble()).toList();
+        }
+      } catch (e) {
+        log('⚠️ [FaceVerificationService] Error parsing face embedding string: $e');
+      }
+    }
+    return null;
+  }
 
   /// Key format scoped strictly by account ID to ensure complete template isolation.
   String _storageKeyForAccount(String accountId) => 'face_embedding_$accountId';
 
-  /// Checks if the given account has an enrolled face template.
+  /// Checks if the given account has an enrolled face template (in memory or secure storage).
   Future<bool> hasEnrolledFace(String accountId) async {
+    if (_cachedEmbeddings.containsKey(accountId) && _cachedEmbeddings[accountId]!.isNotEmpty) {
+      return true;
+    }
     final raw = await _secureStorage.read(key: _storageKeyForAccount(accountId));
     return raw != null && raw.isNotEmpty;
   }
 
   /// Retrieves the enrolled 192-dim template for the given account.
+  /// Checks fast in-memory cache first, then falls back to secure storage.
   Future<List<double>?> getEnrolledEmbedding(String accountId) async {
+    if (_cachedEmbeddings.containsKey(accountId) && _cachedEmbeddings[accountId]!.isNotEmpty) {
+      return _cachedEmbeddings[accountId];
+    }
+
     final raw = await _secureStorage.read(key: _storageKeyForAccount(accountId));
     if (raw == null || raw.isEmpty) return null;
 
     try {
       final List<dynamic> decoded = jsonDecode(raw);
-      return decoded.map((e) => (e as num).toDouble()).toList();
+      final embedding = decoded.map((e) => (e as num).toDouble()).toList();
+      _cachedEmbeddings[accountId] = embedding;
+      return embedding;
     } catch (e) {
       log('❌ [FaceVerificationService] Corrupted face template for $accountId: $e');
       return null;
     }
   }
 
-  /// Saves the enrolled 192-dim template for the given account.
+  /// Saves the enrolled 192-dim template for the given account in both memory and secure storage.
   Future<void> saveEnrolledEmbedding(String accountId, List<double> embedding) async {
     if (embedding.length != embeddingDim) {
       throw ArgumentError('Expected $embeddingDim-dimensional embedding, got ${embedding.length}');
     }
     final normalized = l2Normalize(embedding);
+    _cachedEmbeddings[accountId] = normalized;
     final jsonStr = jsonEncode(normalized);
     await _secureStorage.write(key: _storageKeyForAccount(accountId), value: jsonStr);
-    log('💾 [FaceVerificationService] Enrolled template saved securely for account: $accountId');
+    log('💾 [FaceVerificationService] Enrolled template saved securely for account: $accountId (${embedding.length} dims)');
   }
 
   /// Deletes the enrolled face template for the given account.
   Future<void> deleteEnrolledFace(String accountId) async {
+    _cachedEmbeddings.remove(accountId);
     await _secureStorage.delete(key: _storageKeyForAccount(accountId));
     log('🗑️ [FaceVerificationService] Enrolled template deleted for account: $accountId');
   }
