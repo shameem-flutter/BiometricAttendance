@@ -1,5 +1,6 @@
 import 'dart:async';
 import 'dart:developer';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:geolocator/geolocator.dart';
 import 'package:internet_connection_checker_plus/internet_connection_checker_plus.dart';
@@ -357,8 +358,9 @@ class GpsTrackingService extends ChangeNotifier with WidgetsBindingObserver {
 
       _currentLatitude = position.latitude;
       _currentLongitude = position.longitude;
-      _accuracy = position.accuracy;
-      log("📍 [GPS] Current Location: lat=${_currentLatitude?.toStringAsFixed(5)}, lng=${_currentLongitude?.toStringAsFixed(5)}, acc=${_accuracy?.toStringAsFixed(1)}m");
+      if (kDebugMode) {
+        log("📍 [GPS] Current Location: lat=${_currentLatitude?.toStringAsFixed(5)}, lng=${_currentLongitude?.toStringAsFixed(5)}, acc=${_accuracy?.toStringAsFixed(1)}m");
+      }
 
       // 4. Upload Location
       final success = await _apiService.uploadGpsLocation(

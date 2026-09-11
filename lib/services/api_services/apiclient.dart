@@ -1,6 +1,6 @@
 import 'dart:developer';
 import 'package:dio/dio.dart';
-import 'package:flutter/foundation.dart' show kIsWeb;
+import 'package:flutter/foundation.dart' show kIsWeb, kDebugMode;
 import 'package:cookie_jar/cookie_jar.dart';
 import 'package:dio_cookie_manager/dio_cookie_manager.dart';
 import 'package:odoo_mobile/main.dart';
@@ -22,16 +22,18 @@ class ApiClient {
     if (!kIsWeb) {
       dioInstance.interceptors.add(CookieManager(cookieJar));
     }
-    // Inject ngrok header globally so ngrok does not intercept
-    // mobile requests with its HTML browser-warning landing page.
-    dioInstance.interceptors.add(
-      InterceptorsWrapper(
-        onRequest: (options, handler) {
-          options.headers['ngrok-skip-browser-warning'] = 'true';
-          handler.next(options);
-        },
-      ),
-    );
+    // Inject ngrok header in debug mode so ngrok does not intercept
+    // mobile requests with its HTML browser-warning landing page during development.
+    if (kDebugMode) {
+      dioInstance.interceptors.add(
+        InterceptorsWrapper(
+          onRequest: (options, handler) {
+            options.headers['ngrok-skip-browser-warning'] = 'true';
+            handler.next(options);
+          },
+        ),
+      );
+    }
     dioInstance.interceptors.add(SessionInterceptor(dioInstance));
     return dioInstance;
   }

@@ -517,14 +517,18 @@ class _WebviewState extends State<Webview> {
 
   Future<void> _fetchAndDisplayPdf(String url) async {
     try {
-      log("🔄 Fetching PDF from: $url");
+      var secureUrl = url.trim();
+      if (secureUrl.startsWith('http://')) {
+        secureUrl = 'https://${secureUrl.substring(7)}';
+      }
+      log("🔄 Fetching PDF from: $secureUrl");
 
       //  safeSetState(() => _isLoading = true);
 
-      final cookieHeader = await _getCookieHeader(url);
+      final cookieHeader = await _getCookieHeader(secureUrl);
 
       final response = await http.get(
-        Uri.parse(url),
+        Uri.parse(secureUrl),
         headers: {
           'Cookie': cookieHeader,
           'User-Agent': 'Mozilla/5.0 (Linux; Android 10) AppleWebKit/537.36',

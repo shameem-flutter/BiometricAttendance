@@ -1,4 +1,5 @@
 import 'dart:developer';
+import 'dart:io';
 import 'package:dio/dio.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:odoo_mobile/models/face_index_model.dart';
@@ -145,6 +146,7 @@ class AttendanceService {
     required String action, // "check_in" or "check_out"
     bool? faceVerified,
     double? similarityScore,
+    String? devicePlatform,
   }) async {
     final activeAccount = AccountManager.instance.activeAccount;
     if (activeAccount == null) return null;
@@ -158,6 +160,7 @@ class AttendanceService {
       "latitude": latitude,
       "longitude": longitude,
       "action": action,
+      "device_platform": devicePlatform ?? (Platform.isIOS ? "ios" : "android"),
     };
 
     if (faceVerified != null) {

@@ -63,6 +63,9 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
 
   /// Synchronizes authoritative face registration status and template from Odoo backend
   Future<void> _syncFaceStatusFromBackend() async {
+    // On iOS, face template synchronization and embedding storage are not required
+    if (Platform.isIOS) return;
+
     final activeAccount = AccountManager.instance.activeAccount;
     if (activeAccount == null) return;
 
@@ -283,27 +286,32 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
       bool authPassed = false;
       double? similarityScore;
 
-      if (!requireFaceRecognition) {
-        // CASE 1: Face recognition not required -> Skip face verification entirely
-        log("ℹ️ [Attendance] Face recognition not required for account ${activeAccount.id}. Proceeding directly to GPS...");
-        authPassed = true;
-      } else {
-        // CASES 2 & 3: Face recognition required
-        if (Platform.isIOS) {
-          authPassed = await _verifyIosFaceId(activeAccount, action);
-          similarityScore = 1.0;
-        } else {
-          final (passed, score) = await _verifyAndroidFaceLock(activeAccount, action);
-          authPassed = passed;
-          similarityScore = score;
-        }
-
+      if (Platform.isIOS) {
+        // On iOS: server face registration and face_embedding_data are not required.
+        // Attendance authentication uses native Apple Face ID without similarity scores.
+        authPassed = await _verifyIosFaceId(activeAccount, action);
+        similarityScore = null;
         if (!authPassed) {
           return; // MANDATORY: Return immediately without requesting GPS or calling attendance API
         }
+      } else {
+        // On Android: check requireFaceRecognition and custom Face Lock
+        if (!requireFaceRecognition) {
+          // CASE 1: Face recognition not required -> Skip face verification entirely
+          log("ℹ️ [Attendance] Face recognition not required for account ${activeAccount.id}. Proceeding directly to GPS...");
+          authPassed = true;
+        } else {
+          // CASES 2 & 3: Face recognition required
+          final (passed, score) = await _verifyAndroidFaceLock(activeAccount, action);
+          authPassed = passed;
+          similarityScore = score;
+          if (!authPassed) {
+            return; // MANDATORY: Return immediately without requesting GPS or calling attendance API
+          }
+        }
       }
 
-      log("✅ [Attendance] Auth check passed (requireFace: $requireFaceRecognition). Proceeding to GPS location...");
+      log("✅ [Attendance] Auth check passed (platform: ${Platform.isIOS ? 'ios' : 'android'}, requireFace: $requireFaceRecognition). Proceeding to GPS location...");
 
       final position = await _getCurrentLocation();
       if (position == null) {
@@ -323,8 +331,9 @@ class _AttendanceScreenState extends State<AttendanceScreen> {
         latitude: position.latitude,
         longitude: position.longitude,
         action: action,
-        faceVerified: requireFaceRecognition ? true : false,
-        similarityScore: requireFaceRecognition ? similarityScore : null,
+        faceVerified: Platform.isIOS ? true : (requireFaceRecognition ? true : false),
+        similarityScore: Platform.isIOS ? null : (requireFaceRecognition ? similarityScore : null),
+        devicePlatform: Platform.isIOS ? "ios" : "android",
       );
 
       if (!mounted) return;

@@ -2,6 +2,7 @@ import 'dart:convert';
 import 'dart:developer';
 import 'dart:math' as math;
 import 'dart:ui';
+import 'package:flutter/foundation.dart';
 import 'package:flutter_secure_storage/flutter_secure_storage.dart';
 import 'package:image/image.dart' as img;
 import 'package:odoo_mobile/utils/camera_image_converter.dart';
@@ -306,8 +307,10 @@ class FaceVerificationService {
     final similarity = computeCosineSimilarity(liveEmbedding, enrolledTemplate);
     final isMatch = similarity >= threshold;
 
-    log('🔍 [FaceVerificationService] 1:1 Match result for account $accountId:');
-    log('   Similarity: ${similarity.toStringAsFixed(4)} | Threshold: $threshold | Pass: $isMatch');
+    if (kDebugMode) {
+      log('🔍 [FaceVerificationService] 1:1 Match result for account $accountId:');
+      log('   Similarity: ${similarity.toStringAsFixed(4)} | Threshold: $threshold | Pass: $isMatch');
+    }
 
     return FaceVerificationMatchResult(
       isMatch: isMatch,

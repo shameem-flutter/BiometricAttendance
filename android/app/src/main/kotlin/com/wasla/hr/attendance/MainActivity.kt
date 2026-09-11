@@ -1,4 +1,4 @@
-package com.febno.erpgo.attendance
+package com.wasla.hr.attendance
 
 import io.flutter.embedding.android.FlutterFragmentActivity
 

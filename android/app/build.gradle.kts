@@ -15,7 +15,7 @@ if (keystorePropertiesFile.exists()) {
 }
 
 android {
-    namespace = "com.febno.erpgo.attendance"
+    namespace = "com.wasla.hr.attendance"
     // Explicitly set to 36 (Android 16) — matches Flutter 3.38.5 defaults.
     compileSdk = 36
     ndkVersion = flutter.ndkVersion
@@ -41,7 +41,7 @@ android {
     }
 
     defaultConfig {
-        applicationId = "com.febno.erpgo.attendance"
+        applicationId = "com.wasla.hr.attendance"
         // Upgraded to 26 (Android 8.0) required by tflite_flutter runtime
         minSdk = 26
         // Target Android 16 (API 36) — required for new Play Store submissions in 2025/2026.
@@ -52,11 +52,11 @@ android {
 
     buildTypes {
         release {
-            // Use the release keystore if key.properties exists, otherwise fall back to debug.
-            signingConfig = if (keystorePropertiesFile.exists())
+            signingConfig = if (keystorePropertiesFile.exists()) {
                 signingConfigs.getByName("release")
-            else
-                signingConfigs.getByName("debug")
+            } else {
+                throw GradleException("Production release build failed: android/key.properties was not found.")
+            }
         }
     }
 }
